@@ -1,0 +1,10 @@
+SAMPLES:
+  - SRR16481365
+  - SRR16481366
+  - SRR16481367
+  - SRR16481371
+  - SRR16481372
+  - SRR16481373
+REF: resources/Saccharomyces_cerevisiae.R64-1-1.cdna.all.fa
+ADAPTERS: resources/TruSeq3-PE.fa
+DATA_URLS: resources/urls.txt

@@ -1,0 +1,105 @@
+configfile: "config/config.yaml"
+
+SAMPLES = config["SAMPLES"]
+REF = config["REF"]
+ADAPTERS = config["ADAPTERS"]
+DATA_URLS = config["DATA_URLS"]
+
+rule all:
+    input:
+        "results/multiqc_report.html",
+        expand("results/Kallisto/{sample}", sample=SAMPLES)
+    output:
+        touch(".done")
+
+rule dl_data:
+    input:
+        DATA_URLS
+    output:
+        expand("reads/{sample}_{number}.fastq.gz", sample=SAMPLES, number=[1,2])
+    log: "logs/dl.log"
+    shell:
+        "wget -i {input}"
+
+rule kallisto_index:
+    input:
+        REF
+    output:
+        "results/Kallisto/s288c.idx"
+    log: "logs/kallisto/index.log"
+    shell:
+        "kallisto index -i {output} {input}"
+
+rule kallisto_quant:
+    input:
+        index=rules.kallisto_index.output,
+        forward="results/Cutadapt/{sample}_1_cut.fastq",
+        rev="results/Cutadapt/{sample}_2_cut.fastq",
+    threads: 8
+    output:
+        directory("results/Kallisto/{sample}")
+    log:
+        "logs/kallisto/{sample}.log"
+    shell:
+        "kallisto quant -i {input.index} -o {output} -t {threads} {input.forward} {input.rev} 2> {log}"
+
+rule trimmomatic:
+    input:
+        forward="reads/{sample}_1.fastq.gz",
+        rev="reads/{sample}_2.fastq.gz"
+    output:
+        temp("results/Trimmomatic/{sample}_1P.fastq"),
+        temp("results/Trimmomatic/{sample}_2P.fastq"),
+        temp("results/Trimmomatic/{sample}_1U.fastq"),
+        temp("results/Trimmomatic/{sample}_2U.fastq"),
+    params:
+        baseout="results/Trimmomatic/{sample}.fastq",
+        trimmer="ILLUMINACLIP:Adapters.fa:2:30:10:1:true LEADING:3 TRAILING:3 SLIDINGWINDOW:4:15 MINLEN:36"
+    threads: 8
+    log: "logs/trimmomatic/{sample}.log"
+    shell:
+        "trimmomatic PE -threads {threads} {input.forward} {input.rev} "
+        "-baseout {params.baseout} {params.trimmer} 2> {log}"
+
+rule cutadapt:  # didn't mention it in the webinar :(
+    input:
+        "results/Trimmomatic/{sample}_1P.fastq",
+        "results/Trimmomatic/{sample}_2P.fastq",
+    output:
+        "results/Cutadapt/{sample}_1_cut.fastq",
+        "results/Cutadapt/{sample}_2_cut.fastq"
+    threads: 8
+    shell:
+        "cutadapt -j {threads} -a AGATCGGAAGAG -A AGATCGGAAGAG -o {output[0]} -p {output[1]} "
+        "{input[0]} {input[1]}"
+
+rule fastqc_before:
+    input:
+        "reads/{sample}_{number}.fastq.gz"
+    output:
+        directory("logs/fastqc/{sample}_{number}")
+    shell:
+        "mkdir -p {output};"
+        "fastqc {input} -o {output}"
+
+
+rule fastqc_after:
+    input:
+        rules.cutadapt.output
+    output:
+        directory("logs/fastqc/{sample}_{number}_trimmed")
+    shell:
+        "mkdir -p {output};"
+        "fastqc {input} -o {output}"
+
+rule multiqc:
+    input:
+        expand(rules.fastqc_after.output, sample=SAMPLES, number=[1,2]),
+        expand(rules.fastqc_before.output, sample=SAMPLES, number=[1,2]),
+        expand(rules.kallisto_quant.output, sample=SAMPLES)
+    output:
+        "results/multiqc_report.html"
+    params:
+        outdir="results/"
+    shell:
+        "multiqc -f -o results/ logs"
